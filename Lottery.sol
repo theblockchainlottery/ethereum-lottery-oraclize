@@ -4,8 +4,8 @@ import "github.com/oraclize/ethereum-api/oraclizeAPI.sol";
 
 contract Lottery is usingOraclize {
     
-    //uint public startBlock;
-    //uint public endBlock;
+    uint public startBlock;
+    uint public endBlock;
     address public owner;
     address private winner;
     
@@ -17,7 +17,7 @@ contract Lottery is usingOraclize {
     uint private biggestWinnings;
     uint private winnerBalance;
     uint private nonce = 0;
-    uint private runTime;
+    uint private blockInterval;
     uint private maxRange;
     uint private minRange;
     uint private offset;
@@ -48,33 +48,54 @@ contract Lottery is usingOraclize {
      event OraclizeMsg(string message);
 
     //CONSTRUCTOR (called on contract creation) //////////////////////////////////////
-    function Lottery(uint runTimeInBlocks) public {
+    function Lottery(uint lotteryLengthInBlocks) public {
         owner = msg.sender;
-        runTime = runTimeInBlocks;
-        // 40320 blocks for a week
-       // startBlock = now; //now is alias for block.timestamp
-       // endBlock = startBlock + runTime; // set endBlock
+        blockInterval = lotteryLengthInBlocks;
+        // 40320 blocks for a week (@ 15mins avg per block)
+        startBlock = now; //now is alias for block.timestamp
+        endBlock = startBlock + blockInterval; // set endBlock
         ticketPrice = 10000000000000000;//wei
         oraclize_setProof(proofType_Ledger); // sets the Ledger authenticity proof
         oraclize_setCustomGasPrice(10000000000 wei); // 10 gwei
         restartDraw();
     }
-    
-    /*function setNewEndBlock() private
-    {
-        startBlock = now; //now is alias for block.timestamp
-        endBlock = startBlock + runTime; // set endBlock
-    }
-    
+
+    //returns current block
     function getNowBlock() public view returns (uint)
     {
         return now;
-    }*/
+    }
     
-     //get lottery runtime in blocks (not in use at the moment) 
-    function getRunTimeInBlocks() public view returns(uint)
+    //returns end block
+    function getEndBlock() public view returns (uint)
     {
-        return runTime;
+        return endBlock;
+    }
+    
+     //returns draw length in blocks
+    function getBlockInterval() public view returns(uint)
+    {
+        return blockInterval;
+    }
+    
+    //returns the amount of time left in minutes
+    function getTimeLeft() public view returns (uint)
+    {
+        require(endBlock > now);
+        return (endBlock - now)/(1 minutes);
+    }
+    
+    //returns amount of time passed in minutes
+    function getTimePassed() public view returns (uint)
+    {
+        require(startBlock != 0);
+        return (now - startBlock)/(1 minutes);
+    }
+    
+    function setNewEndBlock() private
+    {
+        startBlock = now; //now is alias for block.timestamp
+        endBlock = startBlock + blockInterval; // set endBlock
     }
     
     //get balance of contract
@@ -83,13 +104,23 @@ contract Lottery is usingOraclize {
         return contractAddress.balance;
     }
     
-    //release all funds to contract owner (precautionary measure to be used only ever in the event of a locked/broken contract)
+    //refund all funds back to users (precautionary measure to be used only ever in the event of a locked/broken contract)
     function fixBrokenContract() public onlyOwner {
         require(contractBalance() > 0);
         //set to false to block future eth sent
         isFunding = false;
-        owner.transfer(contractBalance());
-        //selfdestruct(owner);
+        uint refundAmount = (contractBalance() / numAddresses);
+        uint endArray = entryAddresses.length;
+        uint startArray = endArray - numAddresses;
+        //could be problematic after many draws / high entry amount
+        for (uint i = startArray; i < endArray; i++) {
+            if(contractBalance() < ticketPrice){
+                refundAmount = contractBalance();
+            }
+           entries[entryAddresses[i]].wallet.transfer(refundAmount);
+        }
+        //destroy contract
+        selfdestruct(owner);
     }
     
     //fallback function if funds are transfered directly  to the contract address
@@ -169,7 +200,7 @@ contract Lottery is usingOraclize {
         } else {
             oraclize_newRandomDSQuery(delay, N, callbackGas); //this function internally generates the correct oraclize_query and returns its queryId
             OraclizeMsg("Oraclize query was sent, standing by for the answer..."); 
-        }  
+            }  
     }
 
     // the callback function is called by Oraclize when the result is ready
@@ -189,7 +220,7 @@ contract Lottery is usingOraclize {
             // convert the random bytes to uint
             randomNumber = uint(keccak256(result));
             OraclizeMsg("Oraclize passed proof verification! Random Num Generated");
-               }
+            }
     }
 
     //end lottery
@@ -252,9 +283,9 @@ contract Lottery is usingOraclize {
     
     //clear users ready for next draw
     function refreshUsers() private onlyOwner {
-        //this approach could prove problematic after many draws / high entry amount
         uint endArray = entryAddresses.length;
         uint startArray = endArray - numAddresses;
+        //could be problematic after many draws / high entry amount
         for (uint i = startArray; i < endArray; i++) {
            entries[entryAddresses[i]].entered = false;
            entries[entryAddresses[i]].drawID = 0;
