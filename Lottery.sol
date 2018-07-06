@@ -4,8 +4,7 @@ import "github.com/oraclize/ethereum-api/oraclizeAPI.sol";
 
 contract Lottery is usingOraclize {
     
-    uint public startBlock;
-    uint public endBlock;
+    
     address public owner;
     address private winner;
     
@@ -13,18 +12,20 @@ contract Lottery is usingOraclize {
     bool private numberGen;
    
     uint public randomNumber;
+    uint private startTime;
+    uint private endTime;
+    uint private timeInterval;
     uint private previousDraws;
     uint private biggestWinnings;
     uint private winnerBalance;
     uint private nonce = 0;
-    uint private blockInterval;
     uint private maxRange;
     uint private minRange;
     uint private offset;
     uint private ticketPrice;
    
     struct Entry {
-        uint drawID;
+        uint drawID; // unique ID
         address wallet; // Entry wallet address
         bool entered;  // if true, this person already entered
     }
@@ -46,84 +47,83 @@ contract Lottery is usingOraclize {
      event NoEntries(string message);
      event EntryIDLog(uint id, uint rand, uint offset);
      event OraclizeMsg(string message);
-
+     event Refund(uint entries, string message);
     //CONSTRUCTOR (called on contract creation) //////////////////////////////////////
-    function Lottery(uint lotteryLengthInBlocks) public {
+    function Lottery(uint drawLengthInSeconds) public {
         owner = msg.sender;
-        blockInterval = lotteryLengthInBlocks;
-        // 40320 blocks for a week (@ 15mins avg per block)
-        startBlock = now; //now is alias for block.timestamp
-        endBlock = startBlock + blockInterval; // set endBlock
+        timeInterval = drawLengthInSeconds / 1 seconds; // draw length 604800 secs for 1 week
+        startTime = now; //set startTime , now is alias for block.timestamp (seconds since unix epoch)
+        endTime = startTime + timeInterval; // set endTime
         ticketPrice = 10000000000000000;//wei
         oraclize_setProof(proofType_Ledger); // sets the Ledger authenticity proof
         oraclize_setCustomGasPrice(10000000000 wei); // 10 gwei
         restartDraw();
     }
-
-    //returns current block
-    function getNowBlock() public view returns (uint)
-    {
-        return now;
-    }
     
-    //returns end block
-    function getEndBlock() public view returns (uint)
-    {
-        return endBlock;
-    }
-    
-     //returns draw length in blocks
-    function getBlockInterval() public view returns(uint)
-    {
-        return blockInterval;
-    }
-    
-    //returns the amount of time left in minutes
-    function getTimeLeft() public view returns (uint)
-    {
-        require(endBlock > now);
-        return (endBlock - now)/(1 minutes);
-    }
-    
-    //returns amount of time passed in minutes
-    function getTimePassed() public view returns (uint)
-    {
-        require(startBlock != 0);
-        return (now - startBlock)/(1 minutes);
-    }
-    
-    function setNewEndBlock() private
-    {
-        startBlock = now; //now is alias for block.timestamp
-        endBlock = startBlock + blockInterval; // set endBlock
-    }
-    
-    //get balance of contract
+      //get balance of contract
     function contractBalance() public view returns(uint) {
         address contractAddress = this;
         return contractAddress.balance;
     }
     
+    //returns current block.timestamp
+    function getNowTime() public view returns (uint) {
+        return now;
+    }
+    
+    //returns end time(seconds since unix epoch)
+    function getEndTime() public view returns (uint) {
+        return endTime;
+    }
+    
+     //returns draw length in seconds
+    function getTimeInterval() public view returns(uint) {
+        return timeInterval;
+    }
+    
+    //returns amount of time passed in seconds
+    function getTimePassed() public view returns (uint) {
+        require(startTime != 0);
+        return (now - startTime)/(1 seconds);
+    }
+    
+    //returns the amount of time left in seconds
+    function getTimeLeft() public view returns (uint) {
+        require(endTime > now);
+        return (endTime - now)/(1 seconds);
+    }
+    
+    function setNewEndTime() private onlyOwner {
+        startTime = now; //now is alias for block.timestamp
+        endTime = startTime + timeInterval; // set endTime
+    }
+    
     //refund all funds back to users (precautionary measure to be used only ever in the event of a locked/broken contract)
     function fixBrokenContract() public onlyOwner {
         require(contractBalance() > 0);
-        //set to false to block future eth sent
         isFunding = false;
-        uint refundAmount = (contractBalance() / numAddresses);
-        uint endArray = entryAddresses.length;
-        uint startArray = endArray - numAddresses;
-        //could be problematic after many draws / high entry amount
-        for (uint i = startArray; i < endArray; i++) {
-            if(contractBalance() < ticketPrice){
-                refundAmount = contractBalance();
+        if(tx.gasprice > msg.gas || block.gaslimit < tx.gasprice) {
+        //precautionary measure in the case that tx gas price exceeds remaining gas sent
+        //if so, funds will be sent to contract owner on selfdestruct. manual distribution of refund can then take place
+        Refund(1, "- contract owner must start manual distribution");   //emit event
+        } else {
+            uint refundAmount = (contractBalance() / numAddresses);
+            uint endArray = entryAddresses.length;
+            uint startArray = endArray - numAddresses;
+            //could be problematic after many draws / high entry amount (loops through all entries hence gasprice check)
+            for (uint i = startArray; i < endArray; i++) {
+                if(contractBalance() < ticketPrice) {
+                    refundAmount = contractBalance();
+                }
+                entries[entryAddresses[i]].wallet.transfer(refundAmount);
             }
-           entries[entryAddresses[i]].wallet.transfer(refundAmount);
+            Refund(numAddresses, "- users refunded");   //emitevent
         }
         //destroy contract
         selfdestruct(owner);
     }
     
-    //fallback function if funds are transfered directly  to the contract address
+    //fallback function in the case funds are transferred directly to the contract address(draw particaption still applicable)
     function() public payable {
         buyTicket();
     }
@@ -151,6 +151,9 @@ contract Lottery is usingOraclize {
        //add user address to entryAddress array
         entryAddresses.push(_wallet);
         TicketBought(msg.sender,"Ticket Bought, New Entry!");
+        if(now > endTime) {
+            ////////
+        }
     }
     
     //returns Entry struct data (check if specific address has entered)
@@ -186,24 +189,24 @@ contract Lottery is usingOraclize {
     function getPreviousDraws() view public returns(uint) {
         return previousDraws;
     }
-    
-    //dissallow new entries into the draw - make query to Oraclize
-    function callOraclizeStopFunding() payable external onlyOwner {
+
+
+        //dissallow new entries into the draw - make query to Oraclize
+    function callOraclize(uint delay) payable external onlyOwner {
         require(isFunding && contractBalance() > 0);
         isFunding = false;
         numberGen = false;
         uint N = 7; // number of random bytes we want the datasource to return
-        uint delay = 0; // number of seconds to wait before the execution takes place
-        uint callbackGas = 250000; // amount of gas we want to send Oraclize for the callback function
+        // delay is number of seconds to wait before the execution takes place
+        uint callbackGas = 250000; // amount of gas we want to send Oraclize for the callback function (250000 is sufficent)
         if (oraclize_getPrice("random") > contractBalance()) {
             OraclizeMsg("Oraclize query was NOT sent, please add some ETH to cover for the query fee");
         } else {
             oraclize_newRandomDSQuery(delay, N, callbackGas); //this function internally generates the correct oraclize_query and returns its queryId
             OraclizeMsg("Oraclize query was sent, standing by for the answer..."); 
-            }  
+            }
     }
-
-    // the callback function is called by Oraclize when the result is ready
+    // the __callback function is called by Oraclize when the result is ready
     // the oraclize_randomDS_proofVerify modifier prevents an invalid proof to execute this function code:
     function __callback(bytes32 myid, string result, bytes proof) public { 
         // If we already generated a random number, we can't generate a new one.
@@ -212,7 +215,7 @@ contract Lottery is usingOraclize {
        if (oraclize_randomDS_proofVerify__returnCode(myid, result, proof) != 0) {
             isFunding = true;
             OraclizeMsg("Oraclize failed proof verification, Try Again");
-          // the proof verification has failed, do we need to take any action here?
+          // the proof verification has failed
         } else {
             // the proof verification has passed
             numberGen = true;
@@ -291,7 +294,7 @@ contract Lottery is usingOraclize {
            entries[entryAddresses[i]].drawID = 0;
         }
         numAddresses = 0;
-        //possibly better option to delete entire array
+        //possibly better option to delete entire array 
         /*for(uint i = startArray; i < endArray; i++){
             delete entryAddresses[i];
         }
@@ -303,7 +306,7 @@ contract Lottery is usingOraclize {
         isFunding = true; 
         numberGen = false;
         randomNumber = 0;
+        setNewEndTime();
         DrawStarted("Draw Started");
     }
-
 }
