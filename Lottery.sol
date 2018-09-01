@@ -20,6 +20,7 @@ contract Lottery is usingOraclize {
     uint private timeInterval;
     uint private previousDraws;
     uint private biggestWinnings;
+    uint private overallWinnings;
     uint private winnerBalance;
     uint private nonce = 0;
     uint private maxRange;
@@ -198,6 +199,10 @@ contract Lottery is usingOraclize {
         return biggestWinnings;
     }
     
+    function getOverallWinnings() view public returns (uint) {
+        return overallWinnings;
+    }
+    
     //number of previous finished lottery draws
     function getPreviousDraws() view public returns(uint) {
         return previousDraws;
@@ -211,7 +216,7 @@ contract Lottery is usingOraclize {
         numberGen = false;
         uint N = 7; // number of random bytes we want the datasource to return
         uint delay = 0; // delay is number of seconds to wait before the execution takes place
-        uint callbackGas = 400000; // amount of gas we want to send Oraclize for the callback function - 250000 is sufficent for only __callback, over 310000 for __callback and endDraw()
+        uint callbackGas = 450000; // amount of gas we want to send Oraclize for the callback function - 250000 is sufficent for only __callback, over 310000 for __callback and endDraw()
         oraclize_setProof(proofType_Ledger); // sets the Ledger authenticity proof
         oraclize_setCustomGasPrice(10000000000 wei); // 10 gwei
         if (oraclize_getPrice("random") > contractBalance()) {
@@ -282,6 +287,7 @@ contract Lottery is usingOraclize {
            uint winnings = contractBalance();
            uint devWinnings = winnings/100; //calculate dev funds 1%
            winnerBalance = winnings - devWinnings;//calculate winner funds
+           overallWinnings += winnerBalance;
            if (winnerBalance > biggestWinnings) {
                biggestWinnings = winnerBalance;
            }
