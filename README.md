@@ -5,4 +5,4 @@ Revolutionize The Lottery
 
 The Blockchain Lottery is a community-driven lottery solution DApp, powered by Ethereum and secured with smart-contracts. Written in Solidity, upon the Ethereum network, it's decentralized architecture and blockchain dependance allows for full transparency! Subscribe below to be notified of platform launch!
 
-https://theblockchainlottery.win
+https://theblockchainlottery.io
